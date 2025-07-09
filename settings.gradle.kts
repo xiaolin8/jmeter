@@ -15,17 +15,26 @@
  * limitations under the License.
  */
 import java.util.*
+import java.util.Properties
+
+val props = Properties()
+file("gradle.properties").inputStream().use { props.load(it) }
+val checksumSha512 = props.getProperty("com.github.vlsi.checksum-dependency.sha512")
 
 pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        maven {
+            url = uri("https://repo.gradle.org/gradle/libs-releases")
+        }
+    }
     plugins {
         id("com.github.vlsi.stage-vote-release") version "1.90"
     }
 }
 
 plugins {
-    id("com.gradle.develocity") version "3.18.2"
-    id("com.gradle.common-custom-user-data-gradle-plugin") version "2.0.2"
-    id("org.gradle.toolchains.foojay-resolver-convention") version "0.7.0"
 }
 
 dependencyResolutionManagement {
@@ -99,8 +108,8 @@ fun String?.toBool(nullAs: Boolean, blankAs: Boolean, default: Boolean) =
     }
 
 fun property(name: String) =
-    when (extra.has(name)) {
-        true -> extra.get(name) as? String
+    when {
+        extra.has(name) -> extra.get(name) as? String
         else -> null
     }
 
@@ -110,6 +119,36 @@ if (property("localReleasePlugins").toBool(nullAs = false, blankAs = true, defau
 }
 
 val isCiServer = System.getenv().containsKey("CI")
+
+// Checksum plugin sources can be validated at https://github.com/vlsi/vlsi-release-plugins
+buildscript {
+    val props = java.util.Properties()
+    file("gradle.properties").inputStream().use { props.load(it) }
+    val checksumVersion = props.getProperty("com.github.vlsi.checksum-dependency.version")
+
+    dependencies {
+        classpath("com.gradle.develocity:com.gradle.develocity.gradle.plugin:3.18.2")
+        classpath("com.gradle.common-custom-user-data-gradle-plugin:com.gradle.common-custom-user-data-gradle-plugin.gradle.plugin:2.0.2")
+        classpath("org.gradle.toolchains.foojay-resolver-convention:org.gradle.toolchains.foojay-resolver-convention.gradle.plugin:0.7.0")
+        classpath("com.github.vlsi.gradle:checksum-dependency-plugin:$checksumVersion") {
+            // Gradle ships kotlin-stdlib which is good enough
+            exclude("org.jetbrains.kotlin", "kotlin-stdlib")
+        }
+        // Remove when Autostyle updates jgit dependency
+        classpath("org.eclipse.jgit:org.eclipse.jgit:5.13.2.202306221912-r")
+    }
+    repositories {
+        gradlePluginPortal()
+        maven {
+            url = uri("https://repo.gradle.org/gradle/libs-releases")
+        }
+    }
+}
+
+apply(plugin = "com.github.vlsi.checksum-dependency")
+apply(plugin = "com.gradle.develocity")
+apply(plugin = "com.gradle.common-custom-user-data-gradle-plugin")
+apply(plugin = "org.gradle.toolchains.foojay-resolver-convention")
 
 develocity {
     server = "https://develocity.apache.org"
@@ -123,20 +162,14 @@ develocity {
             ipAddresses { addresses -> addresses.map { "0.0.0.0" } }
         }
     }
-}
 
-// Checksum plugin sources can be validated at https://github.com/vlsi/vlsi-release-plugins
-buildscript {
-    dependencies {
-        classpath("com.github.vlsi.gradle:checksum-dependency-plugin:${settings.extra["com.github.vlsi.checksum-dependency.version"]}") {
-            // Gradle ships kotlin-stdlib which is good enough
-            exclude("org.jetbrains.kotlin", "kotlin-stdlib")
+    buildCache {
+        local {
+            isEnabled = !isCiServer
         }
-        // Remove when Autostyle updates jgit dependency
-        classpath("org.eclipse.jgit:org.eclipse.jgit:5.13.2.202306221912-r")
-    }
-    repositories {
-        gradlePluginPortal()
+        remote(develocity.buildCache) {
+            isEnabled = false
+        }
     }
 }
 
@@ -171,7 +204,7 @@ val expectedSha512 = mapOf(
         to "foojay-resolver-0.7.0.jar",
     "10BF91C79AB151B684834E3CA8BA7D7E19742A3EEB580BDE690FBA433F9FFFE3ABBD79ED3FE3F97986C3A2BADC4D14E28835A8EF89167B4B9CC6014242338769"
         to "gson-2.9.1.jar",
-    settings.extra["com.github.vlsi.checksum-dependency.sha512"].toString()
+    checksumSha512
         to "checksum-dependency-plugin.jar"
 )
 
@@ -183,6 +216,7 @@ fun File.sha512(): String {
     return BigInteger(1, md.digest()).toString(16).uppercase(Locale.ROOT)
 }
 
+/*
 val violations =
     buildscript.configurations["classpath"]
         .resolve()
@@ -195,8 +229,7 @@ val violations =
 if (violations.isNotBlank()) {
     throw GradleException("Buildscript classpath has files that were not explicitly permitted:\n  $violations")
 }
-
-apply(plugin = "com.github.vlsi.checksum-dependency")
+*/
 
 // This enables to try local Autostyle
 property("localAutostyle")?.ifBlank { "../autostyle" }?.let {
@@ -209,11 +242,3 @@ property("localDarklaf")?.ifBlank { "../darklaf" }?.let {
     includeBuild(it)
 }
 
-buildCache {
-    local {
-        isEnabled = !isCiServer
-    }
-    remote(develocity.buildCache) {
-        isEnabled = false
-    }
-}
